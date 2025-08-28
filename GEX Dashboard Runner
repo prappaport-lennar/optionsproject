@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""
+GEX Dashboard Runner
+Complete setup and execution script for the GEX Dashboard
+"""
+
+import subprocess
+import sys
+import os
+import webbrowser
+from pathlib import Path
+import time
+import json
+
+def install_requirements():
+    """Install required Python packages"""
+    print("📦 Installing required packages...")
+    packages = [
+        'yfinance',
+        'pandas',
+        'numpy',
+        'scipy',
+    ]
+    
+    for package in packages:
+        print(f"Installing {package}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package, "--quiet"])
+    
+    print("✅ All packages installed successfully!\n")
+
+def create_server_script():
+    """Create a simple web server script for the dashboard"""
+    server_code = '''
+import http.server
+import socketserver
+import json
+import os
+from urllib.parse import urlparse, parse_qs
+import threading
+import webbrowser
+
+class GEXHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        # Parse URL
+        parsed_path = urlparse(self.path)
+        
+        # Serve the dashboard HTML
+        if parsed_path.path == '/' or parsed_path.path == '/index.html':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            with open('gex_dashboard.html', 'rb') as f:
+                self.wfile.write(f.read())
+            return
+        
+        # Serve data files
+        if parsed_path.path.endswith('.json'):
+            file_path = parsed_path.path[1:]  # Remove leading /
+            if os.path.exists(file_path):
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                with open(file_path, 'rb') as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_error(404, 'File not found')
+            return
+        
+        # Default handler for other files
+        super().do_GET()
+    
+    def log_message(self, format, *args):
+        # Suppress default logging
+        pass
+
+def start_server(port=8000):
+    Handler = GEXHandler
+    
+    with socketserver.TCPServer(("", port), Handler) as httpd:
+        print(f"🚀 Dashboard server running at http://localhost:{port}")
+        print("📊 Open your browser to view the dashboard")
+        print("Press Ctrl+C to stop the server\\n")
+        
+        # Open browser automatically
+        threading.Timer(1.5, lambda: webbrowser.open(f'http://localhost:{port}')).start()
+        
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\\n👋 Server stopped")
+            return
+
+if __name__ == "__main__":
+    start_server()
+'''
+    
+    with open('gex_server.py', 'w') as f:
+        f.write(server_code)
+    
+    print("✅ Server script created\n")
+
+def run_gex_calculator(symbol):
+    """Run the GEX calculator for a given symbol"""
+    print(f"📊 Fetching data for {symbol}...")
+    
+    # Import and run the calculator
+    from gex_calculator import main
+    
+    try:
+        calculator = main(symbol)
+        if calculator:
+            print(f"✅ Data successfully fetched and processed for {symbol}\n")
+            return True
+        else:
+            print(f"❌ Failed to fetch data for {symbol}\n")
+            return False
+    except Exception as e:
+        print(f"❌ Error: {e}\n")
+        return False
+
+def create_batch_runner():
+    """Create a script to run multiple symbols"""
+    batch_code = '''
+import time
+from gex_calculator import main
+
+# List of symbols to process
+symbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'NVDA', 'TSLA', 'AMD', 'META']
+
+print("🔄 Processing multiple symbols...")
+for symbol in symbols:
+    print(f"\\nProcessing {symbol}...")
+    try:
+        calculator = main(symbol)
+        time.sleep(2)  # Be nice to the API
+    except Exception as e:
+        print(f"Error processing {symbol}: {e}")
+        continue
+
+print("\\n✅ Batch processing complete!")
+'''
+    
+    with open('batch_runner.py', 'w') as f:
+        f.write(batch_code)
+    
+    print("✅ Batch runner script created\n")
+
+def create_auto_updater():
+    """Create an auto-update script"""
+    updater_code = '''
+import time
+import schedule
+from datetime import datetime
+from gex_calculator import main
+
+def update_data(symbol='SPY'):
+    """Update GEX data for a symbol"""
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Updating {symbol}...")
+    try:
+        calculator = main(symbol)
+        print(f"✅ {symbol} updated successfully")
+    except Exception as e:
+        print(f"❌ Error updating {symbol}: {e}")
+
+# Schedule updates every 30 minutes during market hours
+schedule.every(30).minutes.do(update_data)
+
+print("🔄 Auto-updater started. Updates every 30 minutes.")
+print("Press Ctrl+C to stop\\n")
+
+try:
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+except KeyboardInterrupt:
+    print("\\n👋 Auto-updater stopped")
+'''
+    
+    with open('auto_updater.py', 'w') as f:
+        f.write(updater_code)
+    
+    print("✅ Auto-updater script created\n")
+
+def main():
+    """Main setup and execution function"""
+    print("""
+╔══════════════════════════════════════════╗
+║        GEX Dashboard Setup Wizard        ║
+╚══════════════════════════════════════════╝
+    """)
+    
+    # Check if this is first run
+    if not os.path.exists('gex_calculator.py'):
+        print("⚠️  GEX calculator script not found!")
+        print("Please ensure gex_calculator.py is in the current directory")
+        return
+    
+    # Install requirements
+    try:
+        import yfinance
+        import pandas
+        import numpy
+        import scipy
+        print("✅ All required packages already installed\n")
+    except ImportError:
+        install_requirements()
+    
+    # Create supporting scripts
+    print("📝 Creating supporting scripts...")
+    create_server_script()
+    create_batch_runner()
+    create_auto_updater()
+    
+    # Menu
+    while True:
+        print("""
+What would you like to do?
+
+1. 📊 Fetch data for a single symbol
+2. 🔄 Run batch processing for multiple symbols
+3. 🚀 Start dashboard web server
+4. ⏰ Start auto-updater
+5. 📈 Fetch data and launch dashboard
+6. ❌ Exit
+        """)
+        
+        choice = input("Enter your choice (1-6): ").strip()
+        
+        if choice == '1':
+            symbol = input("Enter symbol (e.g., SPY): ").strip().upper()
+            if symbol:
+                run_gex_calculator(symbol)
+        
+        elif choice == '2':
+            print("\n🔄 Starting batch processing...")
+            os.system('python batch_runner.py')
+        
+        elif choice == '3':
+            print("\n🚀 Starting dashboard server...")
+            os.system('python gex_server.py')
+        
+        elif choice == '4':
+            print("\n⏰ Starting auto-updater...")
+            os.system('python auto_updater.py')
+        
+        elif choice == '5':
+            symbol = input("Enter symbol (e.g., SPY): ").strip().upper()
+            if symbol:
+                if run_gex_calculator(symbol):
+                    print("🚀 Launching dashboard...")
+                    os.system('python gex_server.py')
+        
+        elif choice == '6':
+            print("\n👋 Goodbye!")
+            break
+        
+        else:
+            print("❌ Invalid choice. Please try again.")
+
+if __name__ == "__main__":
+    main()
