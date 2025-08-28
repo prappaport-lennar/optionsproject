@@ -1,0 +1,388 @@
+"""
+GEX Dashboard Backend - Options Data Fetcher and Calculator
+Fetches options data and calculates gamma exposure metrics for any symbol
+"""
+
+import yfinance as yf
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from scipy.stats import norm
+import json
+import warnings
+warnings.filterwarnings('ignore')
+
+class GEXCalculator:
+    def __init__(self, symbol):
+        self.symbol = symbol.upper()
+        self.ticker = yf.Ticker(self.symbol)
+        self.spot_price = None
+        self.options_data = None
+        self.risk_free_rate = 0.045  # Current approximate risk-free rate
+        self.dividend_yield = 0.01   # Approximate dividend yield
+        
+    def fetch_current_price(self):
+        """Fetch current stock price"""
+        try:
+            info = self.ticker.info
+            self.spot_price = info.get('currentPrice') or info.get('regularMarketPrice')
+            if not self.spot_price:
+                # Fallback to historical data
+                hist = self.ticker.history(period="1d")
+                self.spot_price = hist['Close'].iloc[-1]
+            return self.spot_price
+        except Exception as e:
+            print(f"Error fetching price: {e}")
+            return None
+    
+    def fetch_options_data(self):
+        """Fetch all options chains for the symbol"""
+        try:
+            # Get all expiration dates
+            expirations = self.ticker.options
+            
+            if not expirations:
+                print(f"No options data available for {self.symbol}")
+                return None
+            
+            all_options = []
+            
+            for exp_date in expirations:
+                try:
+                    # Get options chain for this expiration
+                    opt_chain = self.ticker.option_chain(exp_date)
+                    
+                    # Process calls
+                    calls = opt_chain.calls.copy()
+                    calls['type'] = 'call'
+                    calls['expiration'] = exp_date
+                    
+                    # Process puts
+                    puts = opt_chain.puts.copy()
+                    puts['type'] = 'put'
+                    puts['expiration'] = exp_date
+                    
+                    # Combine
+                    all_options.append(pd.concat([calls, puts], ignore_index=True))
+                    
+                except Exception as e:
+                    print(f"Error fetching options for {exp_date}: {e}")
+                    continue
+            
+            if all_options:
+                self.options_data = pd.concat(all_options, ignore_index=True)
+                self._clean_options_data()
+                return self.options_data
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error fetching options data: {e}")
+            return None
+    
+    def _clean_options_data(self):
+        """Clean and prepare options data"""
+        # Rename columns for consistency
+        column_mapping = {
+            'strike': 'strike',
+            'lastPrice': 'lastPrice',
+            'bid': 'bid',
+            'ask': 'ask',
+            'volume': 'volume',
+            'openInterest': 'openInterest',
+            'impliedVolatility': 'IV',
+            'inTheMoney': 'ITM',
+            'contractSymbol': 'contractSymbol'
+        }
+        
+        self.options_data = self.options_data.rename(columns=column_mapping)
+        
+        # Ensure numeric columns
+        numeric_cols = ['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'IV']
+        for col in numeric_cols:
+            if col in self.options_data.columns:
+                self.options_data[col] = pd.to_numeric(self.options_data[col], errors='coerce')
+        
+        # Fill NaN values
+        self.options_data['volume'].fillna(0, inplace=True)
+        self.options_data['openInterest'].fillna(0, inplace=True)
+        self.options_data['IV'].fillna(0.3, inplace=True)  # Default IV of 30%
+        
+        # Convert expiration to datetime
+        self.options_data['expiration'] = pd.to_datetime(self.options_data['expiration'])
+        
+        # Calculate days to expiration
+        today = datetime.now().date()
+        self.options_data['DTE'] = self.options_data['expiration'].apply(
+            lambda x: max((x.date() - today).days, 0)
+        )
+        
+        # Add time to expiration in years
+        self.options_data['T'] = self.options_data['DTE'] / 365.0
+    
+    def calculate_greeks(self):
+        """Calculate Black-Scholes Greeks for all options"""
+        if self.options_data is None or self.spot_price is None:
+            return None
+        
+        # Calculate Greeks using Black-Scholes
+        for idx, row in self.options_data.iterrows():
+            S = self.spot_price
+            K = row['strike']
+            T = max(row['T'], 1/365)  # Minimum 1 day
+            r = self.risk_free_rate
+            q = self.dividend_yield
+            sigma = row['IV']
+            
+            if sigma == 0 or T == 0:
+                self.options_data.at[idx, 'gamma'] = 0
+                self.options_data.at[idx, 'delta'] = 0
+                self.options_data.at[idx, 'vega'] = 0
+                self.options_data.at[idx, 'theta'] = 0
+                continue
+            
+            # Calculate d1 and d2
+            d1 = (np.log(S/K) + (r - q + 0.5*sigma**2)*T) / (sigma*np.sqrt(T))
+            d2 = d1 - sigma*np.sqrt(T)
+            
+            # Gamma (same for calls and puts)
+            gamma = np.exp(-q*T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
+            self.options_data.at[idx, 'gamma'] = gamma
+            
+            # Delta
+            if row['type'] == 'call':
+                delta = np.exp(-q*T) * norm.cdf(d1)
+            else:
+                delta = -np.exp(-q*T) * norm.cdf(-d1)
+            self.options_data.at[idx, 'delta'] = delta
+            
+            # Vega (same for calls and puts)
+            vega = S * np.exp(-q*T) * norm.pdf(d1) * np.sqrt(T) / 100
+            self.options_data.at[idx, 'vega'] = vega
+            
+            # Theta
+            if row['type'] == 'call':
+                theta = (-S*norm.pdf(d1)*sigma*np.exp(-q*T)/(2*np.sqrt(T)) 
+                        - r*K*np.exp(-r*T)*norm.cdf(d2) 
+                        + q*S*np.exp(-q*T)*norm.cdf(d1)) / 365
+            else:
+                theta = (-S*norm.pdf(d1)*sigma*np.exp(-q*T)/(2*np.sqrt(T)) 
+                        + r*K*np.exp(-r*T)*norm.cdf(-d2) 
+                        - q*S*np.exp(-q*T)*norm.cdf(-d1)) / 365
+            self.options_data.at[idx, 'theta'] = theta
+    
+    def calculate_gex(self):
+        """Calculate Gamma Exposure for all options"""
+        if self.options_data is None or self.spot_price is None:
+            return None
+        
+        # Contract size (100 for stocks, 100 for SPX too in this case)
+        contract_size = 100
+        
+        # Calculate GEX for each option
+        # GEX = Gamma * Open Interest * Contract Size * Spot^2 * 0.01
+        # For puts, we multiply by -1 (dealers are short puts)
+        
+        self.options_data['GEX'] = (
+            self.options_data['gamma'] * 
+            self.options_data['openInterest'] * 
+            contract_size * 
+            self.spot_price * 
+            self.spot_price * 
+            0.01
+        )
+        
+        # Apply sign convention: positive for calls, negative for puts
+        self.options_data.loc[self.options_data['type'] == 'put', 'GEX'] *= -1
+        
+        # Calculate Volume GEX (using volume instead of OI)
+        self.options_data['Volume_GEX'] = (
+            self.options_data['gamma'] * 
+            self.options_data['volume'] * 
+            contract_size * 
+            self.spot_price * 
+            self.spot_price * 
+            0.01
+        )
+        
+        # Apply sign convention for Volume GEX
+        self.options_data.loc[self.options_data['type'] == 'put', 'Volume_GEX'] *= -1
+        
+        # Calculate dollar volume
+        self.options_data['dollar_volume'] = (
+            self.options_data['volume'] * 
+            self.options_data['lastPrice'] * 
+            contract_size
+        )
+        
+        # Calculate dollar open interest
+        self.options_data['dollar_OI'] = (
+            self.options_data['openInterest'] * 
+            self.options_data['lastPrice'] * 
+            contract_size
+        )
+    
+    def get_0dte_options(self):
+        """Filter for 0 DTE options only"""
+        if self.options_data is None:
+            return None
+        return self.options_data[self.options_data['DTE'] == 0].copy()
+    
+    def aggregate_by_strike(self, data=None):
+        """Aggregate metrics by strike price"""
+        if data is None:
+            data = self.options_data
+        
+        if data is None or data.empty:
+            return None
+        
+        # Separate calls and puts
+        calls = data[data['type'] == 'call'].copy()
+        puts = data[data['type'] == 'put'].copy()
+        
+        # Aggregate by strike
+        agg_dict = {
+            'volume': 'sum',
+            'openInterest': 'sum',
+            'GEX': 'sum',
+            'Volume_GEX': 'sum',
+            'dollar_volume': 'sum',
+            'dollar_OI': 'sum',
+            'gamma': 'mean',
+            'IV': 'mean'
+        }
+        
+        calls_agg = calls.groupby('strike').agg(agg_dict).reset_index()
+        calls_agg['type'] = 'call'
+        
+        puts_agg = puts.groupby('strike').agg(agg_dict).reset_index()
+        puts_agg['type'] = 'put'
+        
+        # Total aggregation
+        total_agg = data.groupby('strike').agg(agg_dict).reset_index()
+        total_agg['type'] = 'total'
+        
+        return {
+            'calls': calls_agg,
+            'puts': puts_agg,
+            'total': total_agg
+        }
+    
+    def calculate_summary_metrics(self):
+        """Calculate summary metrics for the dashboard"""
+        if self.options_data is None:
+            return {}
+        
+        metrics = {
+            'spot_price': self.spot_price,
+            'total_gex': self.options_data['GEX'].sum() / 1e9,  # In billions
+            'call_gex': self.options_data[self.options_data['type'] == 'call']['GEX'].sum() / 1e9,
+            'put_gex': self.options_data[self.options_data['type'] == 'put']['GEX'].sum() / 1e9,
+            'total_volume': self.options_data['volume'].sum(),
+            'total_oi': self.options_data['openInterest'].sum(),
+            'total_dollar_volume': self.options_data['dollar_volume'].sum() / 1e9,  # In billions
+            'avg_iv': self.options_data['IV'].mean()
+        }
+        
+        # Find max GEX strike (potential pin level)
+        strike_gex = self.options_data.groupby('strike')['GEX'].sum()
+        if not strike_gex.empty:
+            metrics['max_gex_strike'] = strike_gex.abs().idxmax()
+            metrics['max_gex_value'] = strike_gex.loc[metrics['max_gex_strike']] / 1e9
+        
+        return metrics
+    
+    def export_to_json(self, filename=None):
+        """Export all data to JSON for the frontend"""
+        if filename is None:
+            filename = f"{self.symbol}_gex_data.json"
+        
+        # Prepare data for export
+        export_data = {
+            'symbol': self.symbol,
+            'timestamp': datetime.now().isoformat(),
+            'spot_price': self.spot_price,
+            'summary_metrics': self.calculate_summary_metrics(),
+            'options_data': self.options_data.to_dict('records') if self.options_data is not None else [],
+        }
+        
+        # Get aggregated data
+        agg_data = self.aggregate_by_strike()
+        if agg_data:
+            export_data['aggregated'] = {
+                'calls': agg_data['calls'].to_dict('records'),
+                'puts': agg_data['puts'].to_dict('records'),
+                'total': agg_data['total'].to_dict('records')
+            }
+        
+        # Get 0DTE data
+        dte0_data = self.get_0dte_options()
+        if dte0_data is not None and not dte0_data.empty:
+            dte0_agg = self.aggregate_by_strike(dte0_data)
+            if dte0_agg:
+                export_data['dte0_aggregated'] = {
+                    'calls': dte0_agg['calls'].to_dict('records'),
+                    'puts': dte0_agg['puts'].to_dict('records'),
+                    'total': dte0_agg['total'].to_dict('records')
+                }
+        
+        # Save to file
+        with open(filename, 'w') as f:
+            json.dump(export_data, f, default=str)
+        
+        print(f"Data exported to {filename}")
+        return export_data
+
+def main(symbol='SPY'):
+    """Main function to run the GEX calculator"""
+    print(f"Fetching data for {symbol}...")
+    
+    # Initialize calculator
+    calc = GEXCalculator(symbol)
+    
+    # Fetch current price
+    price = calc.fetch_current_price()
+    if price:
+        print(f"Current price: ${price:.2f}")
+    else:
+        print("Failed to fetch current price")
+        return
+    
+    # Fetch options data
+    print("Fetching options chains...")
+    options = calc.fetch_options_data()
+    if options is not None:
+        print(f"Fetched {len(options)} option contracts")
+    else:
+        print("Failed to fetch options data")
+        return
+    
+    # Calculate Greeks
+    print("Calculating Greeks...")
+    calc.calculate_greeks()
+    
+    # Calculate GEX
+    print("Calculating Gamma Exposure...")
+    calc.calculate_gex()
+    
+    # Get summary metrics
+    metrics = calc.calculate_summary_metrics()
+    print("\nSummary Metrics:")
+    print(f"Total GEX: ${metrics['total_gex']:.2f}B")
+    print(f"Call GEX: ${metrics['call_gex']:.2f}B")
+    print(f"Put GEX: ${metrics['put_gex']:.2f}B")
+    print(f"Max GEX Strike: ${metrics.get('max_gex_strike', 'N/A')}")
+    
+    # Export to JSON
+    calc.export_to_json()
+    
+    return calc
+
+if __name__ == "__main__":
+    import sys
+    
+    # Get symbol from command line or use default
+    symbol = sys.argv[1] if len(sys.argv) > 1 else 'SPY'
+    
+    # Run the calculator
+    calculator = main(symbol)
