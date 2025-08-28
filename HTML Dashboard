@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GEX Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.26.0/plotly.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0a;
+            color: #ffffff;
+            padding: 10px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        
+        .title-section h1 {
+            font-size: 32px;
+            margin-bottom: 5px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .subtitle {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .metrics-container {
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .metric {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px 25px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .metric-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #00ff88;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+        
+        .metric-value.negative {
+            color: #ff4444;
+            text-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
+        }
+        
+        .metric-label {
+            font-size: 12px;
+            margin-top: 5px;
+            opacity: 0.8;
+        }
+        
+        .controls {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .controls input, .controls button {
+            padding: 10px 20px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            background: #2a2a2a;
+            color: white;
+            font-size: 14px;
+        }
+        
+        .controls input {
+            text-transform: uppercase;
+        }
+        
+        .controls button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        
+        .controls button:hover {
+            transform: scale(1.05);
+        }
+        
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .chart-container {
+            background: #1a1a1a;
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            border: 1px solid #333;
+        }
+        
+        .chart-title {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #888;
+            text-align: center;
+        }
+        
+        .chart {
+            width: 100%;
+            height: 300px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 18px;
+            color: #666;
+        }
+        
+        .error {
+            background: #ff4444;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .metrics-container {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <div class="title-section">
+                <h1>GEX Dashboard</h1>
+                <div class="subtitle">
+                    <span id="symbol">SPY</span> • 
+                    <span id="timestamp"></span> • 
+                    0 DTE Only
+                </div>
+            </div>
+            <div class="metrics-container">
+                <div class="metric">
+                    <div class="metric-value" id="spot-price">-</div>
+                    <div class="metric-label">Spot Price</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="total-gex">-</div>
+                    <div class="metric-label">Total GEX ($B)</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="max-gex-strike">-</div>
+                    <div class="metric-label">Max GEX Strike</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <input type="text" id="symbol-input" placeholder="Enter Symbol (e.g., SPY)" value="SPY">
+        <button onclick="loadData()">Load Data</button>
+        <input type="file" id="file-input" accept=".json" onchange="loadLocalFile(event)">
+        <span style="color: #666; font-size: 12px;">Or load JSON file from Python script</span>
+    </div>
+    
+    <div id="loading" class="loading" style="display:none;">Loading data...</div>
+    <div id="error" class="error" style="display:none;"></div>
+    
+    <div class="charts-grid" id="charts-container">
+        <!-- Charts will be inserted here -->
+    </div>
+    
+    <script>
+        let currentData = null;
+        
+        // Color scheme
+        const colors = {
+            calls: '#00ff88',
+            puts: '#ff4444',
+            total: '#ffaa00',
+            volume: '#00aaff',
+            background: '#1a1a1a',
+            grid: '#333333'
+        };
+        
+        // Plotly layout template
+        const layoutTemplate = {
+            paper_bgcolor: colors.background,
+            plot_bgcolor: colors.background,
+            font: { color: '#ffffff', size: 10 },
+            margin: { t: 30, r: 20, b: 40, l: 60 },
+            xaxis: {
+                gridcolor: colors.grid,
+                zerolinecolor: colors.grid,
+                color: '#888'
+            },
+            yaxis: {
+                gridcolor: colors.grid,
+                zerolinecolor: colors.grid,
+                color: '#888'
+            },
+            showlegend: false,
+            hovermode: 'x unified'
+        };
+        
+        function formatNumber(num) {
+            if (Math.abs(num) >= 1e9) return (num / 1e9).toFixed(2) + 'B';
+            if (Math.abs(num) >= 1e6) return (num / 1e6).toFixed(2) + 'M';
+            if (Math.abs(num) >= 1e3) return (num / 1e3).toFixed(2) + 'K';
+            return num.toFixed(2);
+        }
+        
+        function updateMetrics(data) {
+            const metrics = data.summary_metrics;
+            
+            // Update header metrics
+            document.getElementById('spot-price').textContent = '$' + metrics.spot_price.toFixed(2);
+            document.getElementById('total-gex').textContent = metrics.total_gex.toFixed(2);
+            document.getElementById('total-gex').className = metrics.total_gex >= 0 ? 'metric-value' : 'metric-value negative';
+            document.getElementById('max-gex-strike').textContent = '$' + (metrics.max_gex_strike || '-');
+            
+            // Update symbol and timestamp
+            document.getElementById('symbol').textContent = data.symbol;
+            document.getElementById('timestamp').textContent = new Date(data.timestamp).toLocaleString();
+        }
+        
+        function createChart(container, data, title, type) {
+            const div = document.createElement('div');
+            div.className = 'chart-container';
+            div.innerHTML = `
+                <div class="chart-title">${title}</div>
+                <div class="chart" id="chart-${container}-${type}"></div>
+            `;
+            document.getElementById('charts-container').appendChild(div);
+            
+            return `chart-${container}-${type}`;
+        }
+        
+        function plotVolumeByStrike(data, chartId, title, valueField = 'volume') {
+            if (!data || !data.total) return;
+            
+            const strikes = data.total.map(d => d.strike);
+            const calls = data.calls.map(d => d[valueField]);
+            const puts = data.puts.map(d => -Math.abs(d[valueField]));
+            
+            const trace1 = {
+                x: strikes,
+                y: calls,
+                type: 'bar',
+                name: 'Calls',
+                marker: { color: colors.calls },
+                hovertemplate: '%{y:,.0f}<extra></extra>'
+            };
+            
+            const trace2 = {
+                x: strikes,
+                y: puts,
+                type: 'bar',
+                name: 'Puts',
+                marker: { color: colors.puts },
+                hovertemplate: '%{y:,.0f}<extra></extra>'
+            };
+            
+            const layout = {
+                ...layoutTemplate,
+                title: { text: title, font: { size: 14 } },
+                barmode: 'relative',
+                xaxis: { ...layoutTemplate.xaxis, title: 'Strike' },
+                yaxis: { ...layoutTemplate.yaxis, title: valueField.charAt(0).toUpperCase() + valueField.slice(1) }
+            };
+            
+            Plotly.newPlot(chartId, [trace1, trace2], layout, {responsive: true});
+        }
+        
+        function plotGEXByStrike(data, chartId, title) {
+            if (!data || !data.total) return;
+            
+            const strikes = data.total.map(d => d.strike);
+            const totalGEX = data.total.map(d => d.GEX / 1e9);
+            
+            const trace = {
+                x: strikes,
+                y: totalGEX,
+                type: 'bar',
+                marker: { 
+                    color: totalGEX.map(v => v >= 0 ? colors.calls : colors.puts)
+                },
+                hovertemplate: '%{y:,.2f}B<extra></extra>'
+            };
+            
+            const layout = {
+                ...layoutTemplate,
+                title: { text: title, font: { size: 14 } },
+                xaxis: { ...layoutTemplate.xaxis, title: 'Strike' },
+                yaxis: { ...layoutTemplate.yaxis, title: 'GEX ($B)' }
+            };
+            
+            Plotly.newPlot(chartId, [trace], layout, {responsive: true});
+        }
+        
+        function plotOpenInterest(data, chartId, title) {
+            if (!data || !data.calls) return;
+            
+            const callStrikes = data.calls.map(d => d.strike);
+            const callOI = data.calls.map(d => d.openInterest);
+            const putStrikes = data.puts.map(d => d.strike);
+            const putOI = data.puts.map(d => d.openInterest);
+            
+            const trace1 = {
+                x: callStrikes,
+                y: callOI,
+                type: 'bar',
+                name: 'Call OI',
+                marker: { color: colors.calls },
+                hovertemplate: '%{y:,.0f}<extra></extra>'
+            };
+            
+            const trace2 = {
+                x: putStrikes,
+                y: putOI,
+                type: 'bar',
+                name: 'Put OI',
+                marker: { color: colors.puts },
+                hovertemplate: '%{y:,.0f}<extra></extra>'
+            };
+            
+            const layout = {
+                ...layoutTemplate,
+                title: { text: title, font: { size: 14 } },
+                xaxis: { ...layoutTemplate.xaxis, title: 'Strike' },
+                yaxis: { ...layoutTemplate.yaxis, title: 'Open Interest' }
+            };
+            
+            Plotly.newPlot(chartId, [trace1, trace2], layout, {responsive: true});
+        }
+        
+        function plotIVByStrike(data, chartId, title) {
+            if (!data || !data.calls) return;
+            
+            const callStrikes = data.calls.map(d => d.strike);
+            const callIV = data.calls.map(d => d.IV * 100);
+            const putStrikes = data.puts.map(d => d.strike);
+            const putIV = data.puts.map(d => d.IV * 100);
+            
+            const trace1 = {
+                x: callStrikes,
+                y: callIV,
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Call IV',
+                line: { color: colors.calls, width: 2 },
+                marker: { size: 4 },
+                hovertemplate: '%{y:.1f}%<extra></extra>'
+            };
+            
+            const trace2 = {
+                x: putStrikes,
+                y: putIV,
+                type: 'scatter',
+                mode: 'lines+markers',
+                name: 'Put IV',
+                line: { color: colors.puts, width: 2 },
+                marker: { size: 4 },
+                hovertemplate: '%{y:.1f}%<extra></extra>'
+            };
+            
+            const layout = {
+                ...layoutTemplate,
+                title: { text: title, font: { size: 14 } },
+                xaxis: { ...layoutTemplate.xaxis, title: 'Strike' },
+                yaxis: { ...layoutTemplate.yaxis, title: 'Implied Volatility (%)' },
+                showlegend: true
+            };
+            
+            Plotly.newPlot(chartId, [trace1, trace2], layout, {responsive: true});
+        }
+        
+        function renderDashboard(data) {
+            currentData = data;
+            
+            // Clear existing charts
+            document.getElementById('charts-container').innerHTML = '';
+            
+            // Update metrics
+            updateMetrics(data);
+            
+            // Use 0DTE data if available, otherwise use all data
+            const plotData = data.dte0_aggregated || data.aggregated;
+            
+            if (!plotData) {
+                document.getElementById('error').textContent = 'No options data available';
+                document.getElementById('error').style.display = 'block';
+                return;
+            }
+            
+            // Create all charts
+            // Row 1: Volume charts
+            const chart1 = createChart('volume', plotData, 'Volume by Strike', 'volume');
+            plotVolumeByStrike(plotData, chart1, 'Volume by Strike: Calls & Puts', 'volume');
+            
+            const chart2 = createChart('volume-gex', plotData, 'Volume GEX', 'gex');
+            plotGEXByStrike(plotData, chart2, 'Volume GEX by Strike: Calls & Puts');
+            
+            const chart3 = createChart('volume-total', plotData, 'Total Volume', 'total');
+            plotVolumeByStrike(plotData, chart3, 'Call Volume vs Put Volume', 'volume');
+            
+            // Row 2: Open Interest charts
+            const chart4 = createChart('oi', plotData, 'Open Interest', 'oi');
+            plotOpenInterest(plotData, chart4, 'Call and Put Open Interest');
+            
+            const chart5 = createChart('oi-gex', plotData, 'OI GEX', 'oigex');
+            plotGEXByStrike(plotData, chart5, 'Total OI GEX by Strike (Calls - Puts)');
+            
+            const chart6 = createChart('oi-separate', plotData, 'OI Separate', 'oisep');
+            plotVolumeByStrike(plotData, chart6, 'Open Interest GEX: Calls & Puts', 'openInterest');
+            
+            // Row 3: Additional metrics
+            const chart7 = createChart('total-gex-strike', plotData, 'Total GEX', 'totalgex');
+            plotGEXByStrike(plotData, chart7, 'Total GEX by Strike');
+            
+            const chart8 = createChart('iv', plotData, 'IV', 'iv');
+            plotIVByStrike(plotData, chart8, 'Implied Volatility by Strike');
+            
+            // Hide loading and error
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+        }
+        
+        function loadLocalFile(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        renderDashboard(data);
+                    } catch (error) {
+                        document.getElementById('error').textContent = 'Error parsing JSON file: ' + error.message;
+                        document.getElementById('error').style.display = 'block';
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+        
+        function loadData() {
+            const symbol = document.getElementById('symbol-input').value.toUpperCase();
+            
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            
+            // In a real implementation, this would fetch from your Python backend
+            // For now, show instructions
+            const message = `
+                To load data for ${symbol}:
+                1. Run the Python script: python gex_calculator.py ${symbol}
+                2. Load the generated ${symbol}_gex_data.json file using the file input above
+            `;
+            
+            document.getElementById('error').textContent = message;
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').style.background = '#444';
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        // Load sample data on page load (you can remove this)
+        window.onload = function() {
+            document.getElementById('error').textContent = 'Please load a data file or run the Python script to generate data';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').style.background = '#444';
+        };
+    </script>
+</body>
+</html>
