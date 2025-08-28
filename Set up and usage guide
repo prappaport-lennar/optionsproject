@@ -1,0 +1,275 @@
+# GEX Dashboard - Complete Setup and Usage Guide
+
+A professional-grade Gamma Exposure (GEX) dashboard for analyzing options flow and dealer positioning for any stock or ETF symbol.
+
+## 📋 Features
+
+- **Real-time Options Data**: Fetches live options chains from Yahoo Finance
+- **Complete Greeks Calculation**: Black-Scholes based Greeks (Delta, Gamma, Vega, Theta)
+- **Gamma Exposure Analysis**: 
+  - Total GEX by strike
+  - Volume-based GEX
+  - Open Interest based GEX
+  - Separated Call/Put analysis
+- **Interactive Dashboard**: Professional web-based visualization with 8+ chart types
+- **Multi-Symbol Support**: Works with any optionable stock or ETF
+- **0 DTE Analysis**: Special focus on zero days to expiration options
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.7 or higher
+- pip (Python package manager)
+
+### Installation
+
+1. **Save all files to a directory:**
+   - `gex_calculator.py` - Main calculation engine
+   - `gex_dashboard.html` - Dashboard visualization
+   - `setup_runner.py` - Setup and execution wizard
+
+2. **Run the setup wizard:**
+```bash
+python setup_runner.py
+```
+
+3. **Choose option 5** to fetch data and launch dashboard automatically
+
+## 📊 How to Use
+
+### Method 1: Interactive Mode (Recommended)
+
+```bash
+python setup_runner.py
+```
+
+This launches an interactive menu where you can:
+- Fetch data for single symbols
+- Run batch processing
+- Start the web dashboard
+- Set up auto-updates
+
+### Method 2: Command Line
+
+```bash
+# Fetch data for a single symbol
+python gex_calculator.py SPY
+
+# This creates SPY_gex_data.json
+# Then open gex_dashboard.html in your browser and load the JSON file
+```
+
+### Method 3: Python Script
+
+```python
+from gex_calculator import GEXCalculator
+
+# Initialize calculator
+calc = GEXCalculator('AAPL')
+
+# Fetch and process data
+calc.fetch_current_price()
+calc.fetch_options_data()
+calc.calculate_greeks()
+calc.calculate_gex()
+
+# Export to JSON for dashboard
+calc.export_to_json()
+
+# Get summary metrics
+metrics = calc.calculate_summary_metrics()
+print(f"Total GEX: ${metrics['total_gex']:.2f}B")
+```
+
+## 📈 Understanding the Charts
+
+### 1. **Volume by Strike**
+- Shows trading volume distribution across strikes
+- Calls (green) above zero, Puts (red) below
+- High volume strikes indicate significant interest levels
+
+### 2. **Volume GEX**
+- Gamma exposure weighted by today's volume
+- Shows where NEW positioning is happening
+- Important for intraday movements
+
+### 3. **Open Interest by Strike**
+- Total outstanding contracts at each strike
+- Represents accumulated positioning over time
+- Major strikes often act as magnets
+
+### 4. **Total GEX by Strike**
+- Combined gamma exposure from all options
+- Positive = dealers long gamma (stabilizing)
+- Negative = dealers short gamma (volatile)
+
+### 5. **Implied Volatility by Strike**
+- Shows volatility skew across strikes
+- Higher IV = more expensive options
+- Useful for identifying market expectations
+
+## 🔧 Configuration
+
+### Customizing Risk-Free Rate and Dividend Yield
+
+Edit `gex_calculator.py`:
+
+```python
+class GEXCalculator:
+    def __init__(self, symbol):
+        self.risk_free_rate = 0.045  # Current Treasury rate
+        self.dividend_yield = 0.01   # Stock's dividend yield
+```
+
+### Adjusting Chart Settings
+
+Edit `gex_dashboard.html` color scheme:
+
+```javascript
+const colors = {
+    calls: '#00ff88',  // Green for calls
+    puts: '#ff4444',   // Red for puts
+    total: '#ffaa00',  // Orange for total
+};
+```
+
+## 🔄 Batch Processing
+
+Create a file `symbols.txt`:
+```
+SPY
+QQQ
+AAPL
+NVDA
+TSLA
+```
+
+Then run:
+```python
+with open('symbols.txt', 'r') as f:
+    symbols = f.read().splitlines()
+
+for symbol in symbols:
+    calc = GEXCalculator(symbol)
+    # ... process
+```
+
+## ⚡ Auto-Updates
+
+For automatic updates during market hours:
+
+```bash
+python auto_updater.py
+```
+
+This updates data every 30 minutes.
+
+## 📊 Example Metrics Output
+
+```
+Symbol: SPY
+Current Price: $450.25
+Total GEX: -$18.5B
+Call GEX: $45.2B
+Put GEX: -$63.7B
+Max GEX Strike: $450
+Zero Gamma Level: $455
+```
+
+## 🎯 Trading Insights
+
+### Key Levels to Watch:
+
+1. **Max GEX Strike**: Often acts as a pin, especially near expiration
+2. **Zero Gamma Level**: Transition point between stable/volatile regimes
+3. **High OI Strikes**: Can act as support/resistance
+4. **0 DTE Strikes**: Particularly important on expiration days
+
+### Market Dynamics:
+
+- **Positive GEX**: Dealers hedge by selling rallies, buying dips (stabilizing)
+- **Negative GEX**: Dealers hedge by buying rallies, selling dips (accelerating)
+- **Near Zero GEX**: Transition zone, increased volatility possible
+
+## 🐛 Troubleshooting
+
+### Common Issues:
+
+1. **No options data available**
+   - Check symbol is correct and has options
+   - Try during market hours for best results
+
+2. **Missing data for some strikes**
+   - Normal for illiquid strikes
+   - Focus on strikes near current price
+
+3. **Dashboard not loading**
+   - Ensure JSON file was created successfully
+   - Check browser console for errors
+
+## 📚 Advanced Features
+
+### Custom Greeks Calculation
+
+```python
+# Override Greeks calculation
+def custom_gamma(S, K, T, r, sigma):
+    d1 = (np.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*np.sqrt(T))
+    return norm.pdf(d1) / (S * sigma * np.sqrt(T))
+```
+
+### Adding New Metrics
+
+```python
+# Add skew analysis
+def calculate_skew(self):
+    otm_calls = self.options_data[
+        (self.options_data['type'] == 'call') & 
+        (self.options_data['strike'] > self.spot_price * 1.05)
+    ]
+    otm_puts = self.options_data[
+        (self.options_data['type'] == 'put') & 
+        (self.options_data['strike'] < self.spot_price * 0.95)
+    ]
+    
+    skew = otm_puts['IV'].mean() - otm_calls['IV'].mean()
+    return skew
+```
+
+## 🔗 Data Sources
+
+- **Options Data**: Yahoo Finance API via yfinance
+- **Risk-Free Rate**: Can be updated from Treasury.gov
+- **Calculations**: Black-Scholes model with standard assumptions
+
+## 📝 Notes
+
+- Data updates once per day for open interest
+- Volume updates in real-time during market hours
+- Best used 30+ minutes after market open
+- 0 DTE analysis most relevant on Mondays, Wednesdays, and Fridays for SPX
+
+## 🤝 Contributing
+
+Feel free to extend the dashboard with:
+- Additional technical indicators
+- Historical GEX tracking
+- Real-time WebSocket updates
+- Integration with broker APIs
+- Machine learning predictions
+
+## ⚠️ Disclaimer
+
+This tool is for educational and research purposes only. Options trading involves significant risk. Always do your own research and consult with financial professionals before making investment decisions.
+
+## 📞 Support
+
+For issues or questions:
+1. Check the troubleshooting section
+2. Review the example code
+3. Ensure all dependencies are installed correctly
+
+---
+
+Happy trading! 📈 Remember: The trend is your friend until the bend at the end! 🎢
